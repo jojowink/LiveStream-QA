@@ -18,9 +18,7 @@ def change_txt_to_dataframe(file_path):
             data.append({
                 "timestamp": current_time,
                 "user": user,
-                "content": content.strip(),
-                "is_question": bool(re.search(r'[？?]', content)),  # 简单判断是否为问题
-                "is_answer": "@" in content
+                "content": content.strip()
             })
 
     return pd.DataFrame(data)
