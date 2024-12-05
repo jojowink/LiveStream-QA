@@ -1,6 +1,9 @@
 import pandas as pd
 from sentence_transformers import SentenceTransformer
 import re
+import spacy
+
+nlp = spacy.load('zh_core_web_sm')  # NLP中文模型
 
 
 # 转换弹幕txt文档为dataframe格式
@@ -23,6 +26,30 @@ def change_txt_to_dataframe(file_path):
             })
 
     return pd.DataFrame(data)
+
+
+# NLP加规则法检测弹幕问题
+def is_question(content):
+    question_keywords = ["为什么", "能否", "如何", "多久", "是不是", "吗", "?", "会不会", "可以不", "咋", "几", "还是",
+                         "多长", "的吧", "能不能", "哪", "怎么"]
+    transition_words = ["但是", "不过", "结果", "最终"]
+    negative_words = ["没", "不", "无法", "只为了", "仅仅"]
+    if any(keyword in content for keyword in question_keywords):
+        return True
+    # 陈述性问题识别方法
+    if any(word in content for word in negative_words) or any(word in content for word in transition_words):
+        return True
+    if re.search(r"[\?？]$", content):
+        return True
+    doc = nlp(content)
+    if any(token.tag_ in ["WRB", "WP"] for token in doc):  # WRB, WP 为问句特征
+        return True
+    return False
+
+
+# 通过用户名判断是否为回答
+def is_answer(user, content):
+    return user == "田博士带娃学习" and len(content) > 0
 
 
 # 知识库预处理
@@ -70,10 +97,13 @@ if __name__ == '__main__':
     vectorize_template_path = './out/vectorizedTemplate/直播间常见问题.pkl'
     model_name = './model/all-MiniLM-L6-v2/'
     df = change_txt_to_dataframe(file_path)
+    df['is_question'] = df['content'].apply(is_question)
+    df['is_answer'] = df.apply(lambda row: is_answer(row['user'], row['content']), axis=1)
+    print(df)
     template_df = change_knowledgebase(template_path)
     print("Parsed Knowledge Base:")
     print(template_df)
-    template_vectorized = vectorize_template(template_df,model_name)
+    template_vectorized = vectorize_template(template_df, model_name)
     print("Vectorized Knowledge Base:")
     print(template_vectorized)
     save_vectorize_template(template_vectorized, vectorize_template_path)
