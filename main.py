@@ -1,3 +1,5 @@
+from datetime import datetime, timedelta
+
 import pandas as pd
 from sentence_transformers import SentenceTransformer, util
 import re
@@ -92,26 +94,105 @@ def save_vectorize_template(template_df, output_path):
 
 
 # 使用语义匹配模型来匹配弹幕问题和答案
-def match_qa(df, model_name, question_col='is_question', answer_col='is_answer', content_col='content',
-             similarity_threshold=0.7):
+def match_qa(df, model_name, timestamp_col='timestamp', question_col='is_question', answer_col='is_answer',
+             content_col='content', user_col='user',
+             similarity_threshold=0.5, window_minutes=5):
     model = SentenceTransformer(model_name)
-    questions = df[df[question_col]][content_col].tolist()
-    answers = df[df[answer_col]][content_col].tolist()
+    if not pd.api.types.is_datetime64_any_dtype(df[timestamp_col]):
+        df[timestamp_col] = pd.to_datetime(df[timestamp_col], format='%H:%M')
+    questions_df = df[df[question_col]].copy()
+    answers_df = df[df[answer_col]].copy()
 
-    if not questions or not answers:
+    if questions_df.empty or answers_df.empty:
         print("No questions or answers found")
-        return pd.DataFrame(columns=['question', 'answer', 'Similarity'])
-    question_embeddings = model.encode(questions, convert_to_tensor=True).cpu()
-    answer_embeddings = model.encode(answers, convert_to_tensor=True).cpu()
-    similarities = util.pytorch_cos_sim(question_embeddings, answer_embeddings)
+        return pd.DataFrame(
+            columns=['Question', 'Answer', 'Similarity', 'Question_User', 'Answer_User', 'Question_Time',
+                     'Answer_Time'])
 
     matched_pairs = []
-    for i, question in enumerate(questions):
-        most_similar_idx = similarities[i].argmax().item()
-        similarity_score = similarities[i][most_similar_idx].item()
-        if similarity_score > similarity_threshold:
-            matched_pairs.append((question, answers[most_similar_idx], similarity_score))
-    return pd.DataFrame(matched_pairs, columns=["Question", "Answer", "Similarity"])
+
+    # 遍历每个问题
+    for _, question_row in questions_df.iterrows():
+        question_text = question_row[content_col]
+        question_time = question_row[timestamp_col]
+        question_user = question_row[user_col]
+
+        # 筛选符合时间窗口的答案
+        valid_answers_df = answers_df[
+            (answers_df[timestamp_col] >= question_time) &
+            (answers_df[timestamp_col] <= question_time + timedelta(minutes=window_minutes))
+            ]
+
+        if valid_answers_df.empty:
+            # 没有匹配的回答，记录问题
+            matched_pairs.append({
+                "user": question_user,
+                "Question": question_text,
+                "Answer": "",
+                "Similarity": None,
+                "Question_Time": question_time,
+                "Answer_Time": None
+            })
+            continue
+
+        valid_answers_df = valid_answers_df.reset_index(drop=True)
+
+        # 优先查找@的回答
+        valid_answers_df[content_col] = valid_answers_df[content_col].str.replace(r'\s+', ' ', regex=True).str.strip()
+        question_user = question_user.strip()
+        mention_pattern = f"@{re.escape(question_user)}"
+        mentioned_answers = valid_answers_df[
+            valid_answers_df[content_col].str.contains(mention_pattern, na=False)
+        ]
+        if not mentioned_answers.empty:
+            # 直接取第一个 @ 回答
+            first_mentioned_answer = mentioned_answers.iloc[0]
+            matched_pairs.append({
+                "user": question_user,
+                "Question": question_text,
+                "Answer": first_mentioned_answer[content_col],
+                "Similarity": 1.0,  # 高置信度
+                "Question_Time": question_time,
+                "Answer_Time": first_mentioned_answer[timestamp_col]
+            })
+            continue  # 已找到直接回答，跳过语义匹配
+
+        # 计算问题与有效答案的语义相似度
+        question_embedding = model.encode([question_text], convert_to_tensor=True)
+        valid_answers_texts = valid_answers_df[content_col].tolist()
+        answer_embeddings = model.encode(valid_answers_texts, convert_to_tensor=True)
+        similarities = util.pytorch_cos_sim(question_embedding, answer_embeddings)
+        # 找到最相似的答案
+        best_match_found = False
+        for answer_idx, similarity_score in enumerate(similarities[0]):
+            similarity_score = similarity_score.item()
+            if "@" in valid_answers_texts[answer_idx] and not re.search(mention_pattern, valid_answers_texts[answer_idx]):
+                continue
+            if similarity_score > similarity_threshold:
+                matched_pairs.append({
+                    "user": question_user,
+                    "Question": question_text,
+                    "Answer": valid_answers_texts[answer_idx],
+                    "Similarity": similarity_score,
+                    "Question_Time": question_time,
+                    "Answer_Time": valid_answers_df.iloc[answer_idx][timestamp_col]
+                })
+                best_match_found = True
+                break
+
+        # 如果没有找到合适的回答，则留空回答
+        if not best_match_found:
+            matched_pairs.append({
+                "user": question_user,
+                "Question": question_text,
+                "Answer": "",  # 空回答
+                "Similarity": None,  # 没有相似度
+                "Question_Time": question_time,
+                "Answer_Time": None  # 没有回答时间
+            })
+
+    # 返回匹配结果 DataFrame
+    return pd.DataFrame(matched_pairs)
 
 
 if __name__ == '__main__':
@@ -120,9 +201,10 @@ if __name__ == '__main__':
     vectorize_template_path = './out/vectorizedTemplate/直播间常见问题.pkl'
     model_name = './model/all-MiniLM-L6-v2/'
     df = change_txt_to_dataframe(file_path)
+    df.to_csv('./out/dataframe/df1.csv', index=False, encoding='utf-8')
     df['is_question'] = df['content'].apply(is_question)
     df['is_answer'] = df.apply(lambda row: is_answer(row['user'], row['content']), axis=1)
-    print(df)
+    df.to_csv('./out/dataframe/df2.csv', index=False, encoding='utf-8')
     # template_df = change_knowledgebase(template_path)
     # print("Parsed Knowledge Base:")
     # print(template_df)
@@ -131,8 +213,5 @@ if __name__ == '__main__':
     # print(template_vectorized)
     # save_vectorize_template(template_vectorized, vectorize_template_path)
     # print(f"Vectorized knowledge base saved to {vectorize_template_path}.")
-    matcheqa_df = match_qa(df, model_name)
-    pd.set_option('display.max_rows', 50)  # 设置最多显示 50 行
-    pd.set_option('display.max_columns', None)  # 显示所有列
-    pd.set_option('display.width', 1000)  # 设置每行显示的最大宽度
-    print(matcheqa_df.head(50))
+    matchqa_df = match_qa(df, model_name)
+    matchqa_df.to_csv('./out/dataframe/matchqa_df.csv', index=False, encoding='utf-8')
