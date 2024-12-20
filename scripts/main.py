@@ -196,15 +196,15 @@ def match_qa(df, model_name, timestamp_col='timestamp', question_col='is_questio
 
 
 if __name__ == '__main__':
-    file_path = './data/danmu/田博士 20241127 早场.txt'
-    template_path = './data/Template/直播间常见问题.txt'
-    vectorize_template_path = './out/vectorizedTemplate/直播间常见问题.pkl'
-    model_name = './model/all-MiniLM-L6-v2/'
+    file_path = '../data/danmu/田博士 20241127 早场.txt'
+    template_path = '../data/Template/直播间常见问题.txt'
+    vectorize_template_path = '../out/vectorizedTemplate/直播间常见问题.pkl'
+    model_name = '../model/all-MiniLM-L6-v2/'
     df = change_txt_to_dataframe(file_path)
-    df.to_csv('./out/dataframe/df1.csv', index=False, encoding='utf-8')
+    df.to_csv('../out/dataframe/df1.csv', index=False, encoding='utf-8')
     df['is_question'] = df['content'].apply(is_question)
     df['is_answer'] = df.apply(lambda row: is_answer(row['user'], row['content']), axis=1)
-    df.to_csv('./out/dataframe/df2.csv', index=False, encoding='utf-8')
+    df.to_csv('../out/dataframe/df2.csv', index=False, encoding='utf-8')
     # template_df = change_knowledgebase(template_path)
     # print("Parsed Knowledge Base:")
     # print(template_df)
@@ -214,4 +214,4 @@ if __name__ == '__main__':
     # save_vectorize_template(template_vectorized, vectorize_template_path)
     # print(f"Vectorized knowledge base saved to {vectorize_template_path}.")
     matchqa_df = match_qa(df, model_name)
-    matchqa_df.to_csv('./out/dataframe/matchqa_df.csv', index=False, encoding='utf-8')
+    matchqa_df.to_csv('../out/dataframe/matchqa_df.csv', index=False, encoding='utf-8')
