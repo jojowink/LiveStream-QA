@@ -1,6 +1,9 @@
+import os
+import pickle
 from datetime import datetime, timedelta
 
 import pandas as pd
+import torch
 from sentence_transformers import SentenceTransformer, util
 import re
 import spacy
@@ -166,7 +169,8 @@ def match_qa(df, model_name, timestamp_col='timestamp', question_col='is_questio
         best_match_found = False
         for answer_idx, similarity_score in enumerate(similarities[0]):
             similarity_score = similarity_score.item()
-            if "@" in valid_answers_texts[answer_idx] and not re.search(mention_pattern, valid_answers_texts[answer_idx]):
+            if "@" in valid_answers_texts[answer_idx] and not re.search(mention_pattern,
+                                                                        valid_answers_texts[answer_idx]):
                 continue
             if similarity_score > similarity_threshold:
                 matched_pairs.append({
@@ -195,10 +199,72 @@ def match_qa(df, model_name, timestamp_col='timestamp', question_col='is_questio
     return pd.DataFrame(matched_pairs)
 
 
+# 与知识库相匹配
+def validate(matchqa_df, vectorized_template_path, model_name, output_path):
+    # 加载向量化后的知识库模板
+    knowledge_base = pd.read_pickle(vectorized_template_path)
+
+    # 转换 question_vector 和 answer_vector 为 PyTorch 张量
+    knowledge_base['question_vector'] = knowledge_base['question_vector'].apply(torch.tensor)
+    knowledge_base['answer_vector'] = knowledge_base['answer_vector'].apply(torch.tensor)
+
+    # 模型加载（用于生成未匹配到模板时的新向量）
+    model = SentenceTransformer(model_name)
+
+    # 初始化结果存储
+    results = []
+
+    # 遍历问答对 DataFrame
+    for _, row in matchqa_df.iterrows():
+        question = row['Question']
+        answer = row['Answer']
+
+        # 提取场控回答的向量
+        question_vector = model.encode([question], convert_to_tensor=True)
+        answer_vector = model.encode([answer], convert_to_tensor=True)
+
+        # 计算与知识库问题的相似度
+        kb_question_vectors = torch.stack(knowledge_base['question_vector'].tolist())
+        question_similarities = util.pytorch_cos_sim(question_vector, kb_question_vectors)[0]
+
+        # 找到最相似的模板问题
+        max_question_idx = torch.argmax(question_similarities).item()
+        max_question_similarity = question_similarities[max_question_idx]
+
+        # 提取对应模板答案的向量
+        kb_answer_vector = knowledge_base.iloc[max_question_idx]['answer_vector']
+        answer_similarity = util.pytorch_cos_sim(answer_vector, kb_answer_vector).item()
+
+        # 判断是否匹配成功
+        is_correct = max_question_similarity >= 0.5 and answer_similarity >= 0.5
+
+        # 获取模板内容
+        matched_question = knowledge_base.iloc[max_question_idx]['question']
+        matched_answer = knowledge_base.iloc[max_question_idx]['answer']
+
+        # 保存结果
+        results.append({
+            '片段内容': question,
+            '对话原文': answer,
+            '知识库原文': f"{matched_question} -> {matched_answer}",
+            '是否回答正确': "是" if is_correct else "否",
+            '问题类别': "匹配模板" if is_correct else "未匹配"
+        })
+
+    # 转为 DataFrame 并保存
+    results_df = pd.DataFrame(results)
+    os.makedirs(output_path, exist_ok=True)
+    output_file = os.path.join(output_path, "validation_results.xlsx")
+    results_df.to_excel(output_file, index=False)
+
+    print(f"验证结果已保存到: {output_file}")
+
+
 if __name__ == '__main__':
     file_path = '../data/danmu/田博士 20241127 早场.txt'
     template_path = '../data/Template/直播间常见问题.txt'
     vectorize_template_path = '../out/vectorizedTemplate/直播间常见问题.pkl'
+    output_path = '../out/results'
     model_name = '../model/all-MiniLM-L6-v2/'
     df = change_txt_to_dataframe(file_path)
     df.to_csv('../out/dataframe/df1.csv', index=False, encoding='utf-8')
@@ -215,3 +281,5 @@ if __name__ == '__main__':
     # print(f"Vectorized knowledge base saved to {vectorize_template_path}.")
     matchqa_df = match_qa(df, model_name)
     matchqa_df.to_csv('../out/dataframe/matchqa_df.csv', index=False, encoding='utf-8')
+    validate(matchqa_df, vectorize_template_path, model_name, output_path)
+
