@@ -219,6 +219,8 @@ def validate(matchqa_df, vectorized_template_path, model_name, output_path):
         user = row['user']
         question = row['Question']
         answer = row['Answer']
+        question_time = row['Question_Time']
+        answer_time = row['Answer_Time']
 
         # 提取场控回答的向量
         question_vector = model.encode([question], convert_to_tensor=True)
@@ -243,14 +245,21 @@ def validate(matchqa_df, vectorized_template_path, model_name, output_path):
         matched_question = knowledge_base.iloc[max_question_idx]['question']
         matched_answer = knowledge_base.iloc[max_question_idx]['answer']
 
+        # 计算回答延迟
+        delay = None
+        if pd.notnull(answer_time):
+            delay = (pd.to_datetime(answer_time)-pd.to_datetime(question_time)).total_seconds()
+
         # 保存结果
         results.append({
+            '质检表ID': len(results)+1,
             '用户名': user,
-            '片段内容': question,
-            '对话原文': answer,
+            '片段内容': f"{question}\n{answer}",
+            '对话原文': question,
             '知识库原文': f"{matched_question} -> {matched_answer}",
             '是否回答正确': "是" if is_correct else "否",
-            '问题类别': "匹配模板" if is_correct else "未匹配"
+            '回答延迟': delay,
+            '问题类别': None
         })
 
     # 转为 DataFrame 并保存
