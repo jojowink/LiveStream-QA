@@ -216,6 +216,7 @@ def validate(matchqa_df, vectorized_template_path, model_name, output_path):
 
     # 遍历问答对 DataFrame
     for _, row in matchqa_df.iterrows():
+        user = row['user']
         question = row['Question']
         answer = row['Answer']
 
@@ -244,6 +245,7 @@ def validate(matchqa_df, vectorized_template_path, model_name, output_path):
 
         # 保存结果
         results.append({
+            '用户名': user,
             '片段内容': question,
             '对话原文': answer,
             '知识库原文': f"{matched_question} -> {matched_answer}",
