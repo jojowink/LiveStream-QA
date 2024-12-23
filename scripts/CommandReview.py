@@ -2,6 +2,7 @@ import os
 from datetime import datetime, timedelta
 
 import pandas as pd
+import torch
 from sentence_transformers import SentenceTransformer, util
 import re
 import spacy
@@ -158,12 +159,87 @@ def match_qa(df, model_name, timestamp_col='timestamp', question_col='is_questio
     return pd.DataFrame(matched_pairs)
 
 
+# 与知识库相匹配
+def validate(matchqa_df, vectorized_template_path, model_name):
+    # 加载向量化后的知识库模板
+    knowledge_base = pd.DataFrame()
+    for file in os.listdir(vectorized_template_path):
+        if file.endswith('.pkl'):
+            file_path = os.path.join(vectorized_template_path, file)
+            temp_knowledge_base = pd.read_pickle(file_path)
+            temp_knowledge_base['source_file'] = os.path.splitext(file)[0]  # 标记来源文件
+            knowledge_base = pd.concat([knowledge_base, temp_knowledge_base], ignore_index=True)
+
+    # 转换 question_vector 和 answer_vector 为 PyTorch 张量
+    knowledge_base['question_vector'] = knowledge_base['question_vector'].apply(torch.tensor)
+    knowledge_base['answer_vector'] = knowledge_base['answer_vector'].apply(torch.tensor)
+
+    # 模型加载（用于生成未匹配到模板时的新向量）
+    model = SentenceTransformer(model_name)
+
+    # 初始化结果存储
+    results = []
+
+    # 遍历问答对 DataFrame
+    for _, row in matchqa_df.iterrows():
+        user = row['user']
+        question = row['Question']
+        answer = row['Answer']
+        question_time = row['Question_Time']
+        answer_time = row['Answer_Time']
+
+        # 提取场控回答的向量
+        question_vector = model.encode([question], convert_to_tensor=True)
+        answer_vector = model.encode([answer], convert_to_tensor=True)
+
+        # 计算与知识库问题的相似度
+        kb_question_vectors = torch.stack(knowledge_base['question_vector'].tolist())
+        question_similarities = util.pytorch_cos_sim(question_vector, kb_question_vectors)[0]
+
+        # 找到最相似的模板问题
+        max_question_idx = torch.argmax(question_similarities).item()
+        max_question_similarity = question_similarities[max_question_idx]
+
+        # 提取对应模板答案的向量
+        kb_answer_vector = knowledge_base.iloc[max_question_idx]['answer_vector']
+        answer_similarity = util.pytorch_cos_sim(answer_vector, kb_answer_vector).item()
+
+        # 判断是否匹配成功
+        is_correct = max_question_similarity >= 0.5 and answer_similarity >= 0.5
+
+        # 获取模板内容
+        matched_question = knowledge_base.iloc[max_question_idx]['question']
+        matched_answer = knowledge_base.iloc[max_question_idx]['answer']
+
+        # 计算回答延迟
+        delay = None
+        if pd.notnull(answer_time):
+            delay = (pd.to_datetime(answer_time) - pd.to_datetime(question_time)).total_seconds()
+
+        # 保存结果
+        results.append({
+            '质检表ID': len(results) + 1,
+            '用户名': user,
+            '片段内容': f"{question}\n{answer}",
+            '对话原文': question,
+            '知识库原文': f"{matched_question} -> {matched_answer}",
+            '是否回答正确': "是" if is_correct else "否",
+            '回答延迟': delay,
+            '问题类别': None
+        })
+
+    # 转为 DataFrame 并保存
+    return pd.DataFrame(results)
+
+
 if __name__ == '__main__':
     file_path = input("请输入要处理的文件路径：").strip()
     if not os.path.exists(file_path):
         print(f"错误：文件 {file_path} 不存在！")
     else:
         model_name = '../model/all-MiniLM-L6-v2'
+        vectorized_template_path = '../out/vectorizedTemplate'
+        output_path = '../out/results'
         base_name = os.path.splitext(os.path.basename(file_path))[0]
 
         print("正在处理弹幕数据...")
@@ -177,5 +253,11 @@ if __name__ == '__main__':
         print("正在匹配问答对...")
         matchqa_df = match_qa(df, model_name)
         matchqa_df.to_csv(f'./out/dataframe/{base_name}/{base_name}_matchqa.csv', index=False, encoding='utf-8')
-
+        print("正在与知识库匹配，生成结果表格...")
+        results_df = validate(matchqa_df, vectorized_template_path, model_name)
+        os.makedirs(output_path, exist_ok=True)
+        output_file = os.path.join(output_path, f"{base_name}_report.xlsx")
+        results_df.to_excel(output_file, index=False)
+        print(f"验证结果已保存到: {output_file}")
         print("处理完成，结果已保存到相应目录。")
+        input("Press any key to continue...")
