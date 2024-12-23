@@ -233,26 +233,29 @@ def validate(matchqa_df, vectorized_template_path, model_name):
 
 
 if __name__ == '__main__':
-    file_path = input("请输入要处理的文件路径：").strip()
+    base_path = "../data/danmu/"
+    base_name = input("请输入要处理的文件名(位于../data/danmu)：")
+    file_path = os.path.join(base_path, base_name+f".txt")
     if not os.path.exists(file_path):
         print(f"错误：文件 {file_path} 不存在！")
     else:
         model_name = '../model/all-MiniLM-L6-v2'
         vectorized_template_path = '../out/vectorizedTemplate'
         output_path = '../out/results'
-        base_name = os.path.splitext(os.path.basename(file_path))[0]
+        dataframe_path = f'../out/dataframe/{base_name}'
 
         print("正在处理弹幕数据...")
+        os.makedirs(dataframe_path, exist_ok=True)
         df = change_txt_to_dataframe(file_path)
-        df.to_csv(f'../out/dataframe/{base_name}/{base_name}_preprocessing.csv', index=False, encoding='utf-8')
+        df.to_csv(f'{dataframe_path}/{base_name}_preprocessing.csv', index=False, encoding='utf-8')
 
         df['is_question'] = df['content'].apply(is_question)
         df['is_answer'] = df.apply(lambda row: is_answer(row['user'], row['content']), axis=1)
-        df.to_csv(f'../out/dataframe/{base_name}/{base_name}_qaDeterment.csv', index=False, encoding='utf-8')
+        df.to_csv(f'{dataframe_path}/{base_name}_qaDeterment.csv', index=False, encoding='utf-8')
 
         print("正在匹配问答对...")
         matchqa_df = match_qa(df, model_name)
-        matchqa_df.to_csv(f'./out/dataframe/{base_name}/{base_name}_matchqa.csv', index=False, encoding='utf-8')
+        matchqa_df.to_csv(f'{dataframe_path}/{base_name}_matchqa.csv', index=False, encoding='utf-8')
         print("正在与知识库匹配，生成结果表格...")
         results_df = validate(matchqa_df, vectorized_template_path, model_name)
         os.makedirs(output_path, exist_ok=True)
