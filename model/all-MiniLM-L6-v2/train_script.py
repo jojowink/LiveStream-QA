@@ -1,5 +1,5 @@
 """
-Train script for a single file
+Train scripts for a single file
 
 Need to set the TPU address first:
 export XRT_TPU_CONFIG="localservice;0;localhost:51011"
@@ -300,7 +300,7 @@ if __name__ == "__main__":
         print("Output folder already exists.")
         input("Continue?")
 
-    # Write train script to output path
+    # Write train scripts to output path
     os.makedirs(args.output, exist_ok=True)
 
     data_config_path = os.path.join(args.output, 'data_config.json')
