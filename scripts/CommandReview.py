@@ -168,14 +168,14 @@ if __name__ == '__main__':
 
         print("正在处理弹幕数据...")
         df = change_txt_to_dataframe(file_path)
-        df.to_csv(f'../out/dataframe/{base_name}_preprocessing.csv', index=False, encoding='utf-8')
+        df.to_csv(f'../out/dataframe/{base_name}/{base_name}_preprocessing.csv', index=False, encoding='utf-8')
 
         df['is_question'] = df['content'].apply(is_question)
         df['is_answer'] = df.apply(lambda row: is_answer(row['user'], row['content']), axis=1)
-        df.to_csv(f'../out/dataframe/{base_name}_qaDeterment.csv', index=False, encoding='utf-8')
+        df.to_csv(f'../out/dataframe/{base_name}/{base_name}_qaDeterment.csv', index=False, encoding='utf-8')
 
         print("正在匹配问答对...")
         matchqa_df = match_qa(df, model_name)
-        matchqa_df.to_csv(f'./out/dataframe/{base_name}_matchqa.csv', index=False, encoding='utf-8')
+        matchqa_df.to_csv(f'./out/dataframe/{base_name}/{base_name}_matchqa.csv', index=False, encoding='utf-8')
 
         print("处理完成，结果已保存到相应目录。")
